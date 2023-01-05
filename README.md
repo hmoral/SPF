@@ -6,5 +6,5 @@ Femerling, G., Van Oosterhout, C., Feng, S., Bristol, R., Zhang, G., Groombridge
 - Parallel for bash
 
 ### test run
-Small run of 10 replicates for a population N=500 in parallel 2 computing cores
+Small run of 10 replicates for a population N=500 in parallel 2 computing cores  
 ```./SPF_slim_parallel_run.sh 500 1_out out_test 0.2 0.25 2 10```
