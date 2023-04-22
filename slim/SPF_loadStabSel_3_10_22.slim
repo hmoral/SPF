@@ -1,0 +1,628 @@
+// jointly modelling of deleterious variation and additive genetic variation during population decline and recovery
+// written by Hernán E. Morales
+// hernanm@sund.ku.dk
+
+// the script takes as input files:
+// a genomic feature (position on intron, exons and intergeneic regions) file for one chromosome - coord_file_in
+// a recombination map file for one chromosome - rho_file_in
+// a file with hs relationships - hs_in
+
+
+initialize() {
+	
+	if (exists("adapP")==0){
+		defineConstant("adapP",0.05); // proportion of (non-neutral) mutations that will be part of the QTL relative to deleterious mutations
+	}
+	if (exists("adapU")==0){
+		defineConstant("adapU",0.5); // Range of z values that the QTL can take out of normal distribution cenetered at 0
+	}
+	
+	if (exists("declineLen")==0){
+		defineConstant("declineLen",40); // lenght of population decline in simulation steps (ie years)
+	}
+	
+	if (exists("btlLen")==0){
+		defineConstant("btlLen",25); // lenght of bottleneck in simulation steps (ie years)
+	}
+	
+	if (exists("TdeltaAfterCollap")==0){
+		defineConstant("TdeltaAfterCollap",85); // time of enviornmental change after population decline in simulation steps (ie years)
+	}
+	
+	if (exists("Ve")==0){
+		defineConstant("Ve",0); // environmental variance (set to 0 for simplicity)
+	}
+	if (exists("opt1")==0){
+		defineConstant("opt1",1); // starting value for environmental optimum 
+	}
+	
+	if (exists("optDif")==0){
+		defineConstant("optDif",1); // delta value for  environmental optimum
+	}
+	
+	if (exists("opt2")==0){
+		defineConstant("opt2",opt1+optDif); // end value for environmental optimum
+	}
+	
+	if (exists("genTime")==0){
+		defineConstant("genTime",2); // generation time in simulation steps (ie years)
+	}
+	
+	if (exists("NeRatio")==0){
+		defineConstant("NeRatio",10); // N/Ne ratio to correct population size (carrying capacity)
+	}
+	
+	if (exists("seed")==0){
+		defineConstant("seed",01234678); // seed
+	}
+	
+	if (exists("outPref_in")==0){
+		defineConstant("outPref_in","/Users/nrv690/Dropbox/Hernan_main_dropbox/GENDANGERED/georgette/SPF/0_MS/github/trash_test"); // prefix of the output file
+	}
+	
+	if (exists("Nin")==0){
+		defineConstant("Nin",1000); // initial Ne, this is latter named K and then later named Ne. Sorry is confusing, just remanents from old code I have not clean up
+	}
+	
+	if (exists("g")==0){
+		defineConstant("g",5000); // number of genes in the exome part
+	}
+	
+	if (exists("geneLength")==0){
+		defineConstant("geneLength",1000); // gene lenght in the exome part
+	}
+	
+	if (exists("muChrom")==0){
+		defineConstant("muChrom",2.30E-09); // mutation rate in the chromosome part
+	}
+	
+	if (exists("U")==0){
+		defineConstant("U",0.5); // number of mutations per functional genome per generation for the exome part
+	}
+	
+	defineConstant("chrNum", 20); // number of chromsomomes in the exome part
+	
+	// path of genomic feature file
+	if (exists("coord_file_in")==0){
+		defineConstant("coord_file_in","/Users/nrv690/Dropbox/Hernan_main_dropbox/GENDANGERED/Collabs/Cock/genetic_rescue/captive_breeding//coords_SLiM_GCF_000247815.1_FicAlb1.5_chr12.txt"); // a genomic feature (position on intron, exons and intergeneic regions) file for one chromosome
+	
+	}
+	// path of recombination map file
+	if (exists("rho_file_in")==0){
+		defineConstant("rho_file_in","/Users/nrv690/Dropbox/Hernan_main_dropbox/GENDANGERED/Collabs/Cock/genetic_rescue/captive_breeding/out_rho4Ne_win2e+05_col.hun.snpPair_runALL_chr12.txt"); // a recombination map file for one chromosome
+	
+	}
+	
+	// inut deleterious DFE
+	if (exists("hs_in")==0){
+		defineConstant("hs_in","/Users/nrv690/Dropbox/Hernan_main_dropbox/GENDANGERED/Collabs/Cock/genetic_rescue/1_hs_prod1_hmode1_Ne20K_step40K.txt"); // a file with hs relationships
+	
+	}
+	
+	defineConstant("rho", 1e-03); //  recombination rate
+	
+	defineConstant("del_mut", 1000); // number of deleterious mutation types (should NOT be changed)
+	
+	Glen=geneLength*g; // genomic region simulated
+	defineConstant("mu", U/(2*Glen)); //  mutation rate
+	
+	///////// demography
+	defineConstant("burn", asInteger(Nin*3)); // this controls how long the burnin of deleterious and adaptive mutations will be run for
+	defineConstant("popRelativeSize", 0.244); // size of the modeled population relative to the total species Ne (ie.. we simulated one island/one population). This can be modified to simulate a metapopulation of all islands
+	defineConstant("present", 2010); // time of present in years (ie. modern sampling)
+	defineConstant("Popcollapse", 1965); // time of population collapse in years 
+	if(exists("collapseN")==0){defineConstant("collapseN",28);} // popultion size at the bottleneck
+	defineConstant("declineYear", seq(Popcollapse-declineLen,Popcollapse)); // time of population decline in years
+	defineConstant("recoveryYear", seq(Popcollapse+btlLen,2000)); // time of population recovery in years
+	defineConstant("recoveryN", asInteger(seq(collapseN,200,length=length(recoveryYear)))); // popultion sizeb trajectory at the recovery
+	
+	// Intilialize
+	initializeSLiMModelType("nonWF");
+	initializeSLiMOptions(keepPedigrees=T);
+	//	initializeTreeSeq();
+	
+	// deleterious mutations
+	hs=readFile(hs_in);
+	hs=hs[1:(length(hs)-1)];
+	hs=hs[sample(0:(length(hs)-1),del_mut)];
+	s=sapply(hs,"asFloat(strsplit(applyValue,'\t')[3]);");
+	s=-1*s;
+	h=sapply(hs,"asFloat(strsplit(applyValue,'\t')[4]);");
+	prop=rep(1/del_mut,del_mut);
+	prop_exons=sapply(prop,"(applyValue*2.31)/1;");
+	prop_introns=sapply(prop,"(applyValue*0.8)/1;");
+	prop_intergenic=sapply(prop,"(applyValue*0)/1;");
+	
+	
+	// define mutation types
+	for (i in 0:(length(prop)-1))
+	{
+		initializeMutationType(i+2, h[i], "f", asFloat(s[i]));
+		print("mut:"+(i+2)+" - " + "h:"+h[i]+" - "+ "s:" + asFloat(s[i]));
+	}
+	
+	defineConstant("mut_neutral", 1); //  store neutral mutation id
+	initializeMutationType('m1', 0.5, "f", 0.0);         // neutral
+	
+	// additive genetic variation mutations
+	scriptForQTLs = "runif(1,(adapU*-1),adapU);";
+	defineConstant("mut_adapt", del_mut+2); //  store neutral mutation id
+	initializeMutationType(del_mut+2, 0.5, "s", scriptForQTLs);
+	
+	// proportional distribution of mutation types
+	initializeGenomicElementType("g1", 1:(del_mut+2), c(1.0,prop_exons,adapP));  // exon
+	initializeGenomicElementType("g2", 1:(del_mut+2), c(1.0,prop_introns,0.01));  // intron
+	initializeGenomicElementType("g3", 1:(del_mut+2), c(1.0,prop_intergenic,0.01));  // intergeneic
+	initializeGenomicElementType("g4", 1:(del_mut+2), c(1.0,prop_exons,adapP));  // exome
+	
+	// with the code below you can assign mutation rates to each element if needed. Here is redudant as mutation rate is flat
+	// this code is still needed to initializeGenomicElement according to the genomic map
+	coord_file=readFile(coord_file_in);
+	mu_rates=c();
+	mu_ends=c();
+	mu_features=c();
+	mu_exome=mu;
+	mu_exon=(2.31*muChrom)/(2.31+1);
+	mu_intron=(0.8*muChrom)/1;
+	mu_interG=0;
+	mu_exome=(2.31*mu_exome)/(2.31+1);
+	
+	for (coord_line in coord_file)
+	{
+		ROW = strsplit(coord_line, "\t");
+		feature = ROW[2];
+		
+		if(feature=="exon") {
+			initializeGenomicElement(g1, asInteger(ROW[3]), asInteger(ROW[4]));
+			mu_rates=c(mu_rates,mu_exon);
+			mu_features=c(mu_features,"exon");
+			mu_ends=c(mu_ends,asInteger(ROW[4]));
+		}
+		
+		if(feature=="intron") {
+			initializeGenomicElement(g2, asInteger(ROW[3]), asInteger(ROW[4]));
+			mu_rates=c(mu_rates,mu_intron);
+			mu_features=c(mu_features,"intron");
+			mu_ends=c(mu_ends,asInteger(ROW[4]));
+		
+		}
+		if(feature=="non_coding") {
+			initializeGenomicElement(g3, asInteger(ROW[3]), asInteger(ROW[4]));
+			mu_rates=c(mu_rates,mu_interG);
+			mu_features=c(mu_features,"interGen");
+			mu_ends=c(mu_ends,asInteger(ROW[4]));
+		}
+	
+	}
+	
+	chromEnd=mu_ends[length(mu_ends)-1]+1;
+	gene_nums = rep(g/chrNum,chrNum);
+	for (i in 1:g){
+		initializeGenomicElement(g1, chromEnd+((i-1)*geneLength)+(i-1), chromEnd+(i*geneLength)+(i-2) );
+		mu_rates=c(mu_rates,mu_exome);
+		mu_features=c(mu_features,"exome");
+		mu_ends=c(mu_ends,chromEnd+(i*geneLength)+(i-2));
+	}
+	
+	initializeMutationRate(mu_rates, mu_ends);
+	
+	// recombination rate according to recombination map
+	// recombination rate landscape
+	rho_file = readFile(rho_file_in);
+	rates = NULL;
+	ends = NULL;
+	
+	for (rho_line in rho_file)
+	{
+		components = strsplit(rho_line, "\t");
+		ends = c(ends, asInteger(components[2]));
+		rates = c(rates, asFloat(components[7]));
+	}
+	
+	// recombination rates for exome
+	// Multiple chromosomes:
+	for (i in 1:(size(gene_nums)-1)){
+		rates=c(rates, 0, rep(c(rho, 0), asInteger(gene_nums[i-1]-1)), 0.5);
+	}
+	rates=c(rates, 0, rep(c(rho, 0), asInteger(gene_nums[size(gene_nums)-1]-1)));
+	
+	for (i in 1:g){
+		ends=c(ends, chromEnd+(i*geneLength)+(i-2), chromEnd+(i*geneLength)+(i-1));
+	}
+	ends=ends[0:(size(ends)-2)];
+	
+	defineConstant("recomb_ends", ends);
+	defineConstant("recomb_rates", rates);
+	defineConstant("mut_features", mu_features);
+	defineConstant("mut_ends", mu_ends);
+	defineConstant("mut_rates", mu_rates);
+	initializeRecombinationRate(rates, ends);
+	
+	// set seed
+	setSeed(asInteger(seed));
+	
+	// lenght of chr = last position of rho file
+	defineConstant("chromLen", ends[(length(ends)-1)]);
+	defineConstant("seqLength", chromLen);
+	
+	// intial population size
+	defineConstant("K", asInteger(Nin));
+	
+	//mortality prob
+	defineConstant("prob_mort_ancestral",c(0.4,rep(0.1,6),0.4,0.5,0.8,1.0));
+	defineConstant("prob_mort_modern",c(0.66,rep(0.2,6),0.5,0.6,0.8,1.0));
+
+}
+
+//// Add intial population and schedule steps at which demographic events happen
+1 early() {
+	sim.mutationTypes[sim.mutationTypes.id==mut_neutral].convertToSubstitution=T;
+	POP=0;// this can be adapted to simulate a metapopulation
+	for(i in popRelativeSize){
+		POP=POP+1;
+		Ne=asInteger(K*i);
+		sim.addSubpop("p"+POP,Ne);
+		N=asInteger(Ne*NeRatio);
+		sim.subpopulations[POP-1].individuals.age = 1;
+		sim.subpopulations[POP-1].individuals.tagF=1.0;
+		sim.subpopulations[POP-1].tag=N;
+		sim.subpopulations[POP-1].setValue("targetN",N);
+		print(" init pop: " + sim.subpopulations[POP-1].id + "=" + N + " - count="+sim.subpopulations[POP-1].individualCount);
+	}
+	
+	defineConstant("initGen", sim.generation);
+	
+	defineConstant("burn_year", present-(200));
+	defineConstant("burn_declineYear", burn+(declineYear-burn_year));
+	defineConstant("burn_Popcollapse", burn+(Popcollapse-burn_year));
+	defineConstant("burn_recoveryYear", burn+(recoveryYear-burn_year));
+	defineConstant("end", burn+200+100); // end burn + 200 years of simulation + 100 years into the future
+	
+	
+	defineConstant("Tdelta", burn_Popcollapse+TdeltaAfterCollap);
+	sim.rescheduleScriptBlock(s0,burn_declineYear[0]-1,end); // demo events
+	sim.rescheduleScriptBlock(s1,burn,end); // output
+	sim.rescheduleScriptBlock(s2,end,end); // end
+	
+	//define full output name
+	defineConstant("outPref",outPref_in+"_Ne"+Nin+"_NeRt"+NeRatio+"_genT"+genTime+"_opt1"+opt1+"_opt2"+opt2+"_Tdlt"+Tdelta+"_mChr"+muChrom+"_U"+U+"_muEx"+mu+"_rho"+rho+"_adP"+adapP+"_adU"+adapU+"_delM"+del_mut+"_genL"+geneLength+"_genNo"+g+"_brn"+burn+"_end"+end+"_dclLn"+declineLen+"_btlLn"+btlLen+"_cllpsN"+collapseN+"_PopCpse"+burn_Popcollapse+"_Recv"+burn_recoveryYear[0]+"_seed"+getSeed());
+	
+	
+	print("###############"+"\n");
+	print("output: "+outPref);
+	print("Demo events");print(s0);
+	print("Tdelta");print(Tdelta);
+	print("Output");print(s1);
+	print("End");print(s2);
+	print("###############"+"\n");
+	
+	
+	//define ouput files names
+	
+	HEAD="gen" +"\t"+ "pop" +"\t"+ "N" +"\t"+ "mutCount" +"\t"+ "mutFixed" +"\t"+ "meanHet" +"\t"+ "totalLoad" +"\t"+ "relzLoad" +"\t"+ "mskLoad"+"\t"+ "mFit" +"\t"+ "sdFit" +"\t"+ "mCachFit" +"\t"+ "sdCachFit";
+	writeFile(outPref + "_loadSummary.txt",HEAD,append=F);
+		
+	OUT="gen"+ "\t" + "pop" + "\t" + "optimum" + "\t" + "N" + "\t" + "mPheno" + "\t" + "sdPheno" + "\t" + "varPheno" + "\t" + "mutCount" + "\t" + "mFreq" + "\t" + "sdFreq" + "\t" + "varFreq" + "\t" + "mFit" + "\t" + "sdFit" + "\t" + "varFit" + "\t" + "minFit" + "\t" + "Va" + "\t" + "Vd" + "\t" + "Vg";
+	writeFile(outPref+"_fitness.txt", OUT,append=T);
+	
+	sim.setValue("opt",0);
+
+}
+
+// If the intial environmental optimum (opt1) is higher than 0 then mutations need to accumulate first to reach it. So the opt1 is raised slowly
+2: late() {
+	curr_opt=sim.getValue("opt");
+	if(curr_opt<opt1)
+	{
+		new_opt=curr_opt+0.001;
+		sim.setValue("opt",new_opt);
+	}
+}
+
+
+s0 100000000 late() {
+	// Population decline and recovery
+	if(sum(burn_declineYear==sim.generation)>0)
+	{
+		DiguePop=sim.subpopulations[(length(sim.subpopulations)-1)];
+		if(!exists("declineN"))
+		{
+			DiguePopN=DiguePop.individualCount;
+			defineConstant("declineN", asInteger(seq(DiguePopN,collapseN,length=length(declineYear))));
+		}
+		IDX=which(burn_declineYear==sim.generation);
+		print(sim.generation + " !!!! La Digue decline, new N=" + declineN[IDX]);
+		DiguePop.tag=declineN[IDX];
+		DiguePop.setValue("targetN",declineN[IDX]);
+	}
+	
+	// Popcollapse
+	if(sum(burn_Popcollapse==sim.generation)>0)
+	{
+		DiguePop=sim.subpopulations[(length(sim.subpopulations)-1)];
+		print(sim.generation + " !!!! La Digue collapse");
+		DiguePop.tag=collapseN;
+		DiguePop.setValue("targetN",collapseN);
+	}
+	
+	// LaDigue recovery
+	if(sum(burn_recoveryYear==sim.generation)>0)
+	{
+		DiguePop=sim.subpopulations[(length(sim.subpopulations)-1)];
+		IDX=which(burn_recoveryYear==sim.generation);
+		print(sim.generation + " !!!! La Digue recovery, new N=" + recoveryN[IDX]);
+		DiguePop.tag=recoveryN[IDX];
+		DiguePop.setValue("targetN",recoveryN[IDX]);
+	}
+}
+
+// s1 is not used, left here to avoid breaking the sequence of scheduled events
+s1 100000000 late()
+{
+}
+
+// output
+1: late()
+{
+	if((sim.generation < burn & sim.generation % 500 == 0) |
+		(sim.generation >= burn & sim.generation % 5 == 0) |
+		(sim.generation >= (burn_Popcollapse-1)) )
+	{
+		
+		print(sim.generation+" ##### OUTPUT ######");
+		coords=readFile(coord_file_in);
+		coords=asInteger(strsplit(coords[length(coords)-1],"\t")[4]);
+		
+		for(pop in sim.subpopulations)
+		{
+			if(pop.individualCount<4){next;}
+			print(sim.generation+" pop:"+pop.id);
+			// deleterious variation metrics			
+			out=getPopSumm(pop);
+			writeFile(outPref + "_loadSummary.txt",out,append=T);
+						
+			// addtive genetic variance metrics			
+			optimum = sim.getValue("opt"); // define the intial optimum 
+			if(sim.generation > Tdelta){optimum = opt2;} // if the environment has changed already, set the value to opt2
+			fitness=sim.getValue("fit");
+			phenotypes=pop.individuals.tagF;
+			m=sim.mutationTypes[del_mut+1];
+			M1=sim.mutationsOfType(m);
+			p=sim.mutationFrequencies(pop,M1);
+			q=1-p;
+			z=M1.selectionCoeff;
+			h=m.dominanceCoeff;
+			d=sd(z);
+			Va = sum((2*p*q)*(z^2));
+			Vd = sum(2*p*q*d)^2;
+			Vg = Va + Vd;
+			OUT=sim.generation+ "\t" + pop.id + "\t" + optimum + "\t" + pop.individualCount + "\t" + mean(phenotypes) + "\t" + sd(phenotypes)+ "\t" + var(phenotypes) + "\t" + sim.countOfMutationsOfType(m) + "\t" + mean(p) + "\t" + sd(p)+ "\t" + var(p) + "\t" + mean(fitness) + "\t" + sd(fitness)+ "\t" + var(fitness) + "\t" + min(fitness)+ "\t" + Va+ "\t" + Vd+ "\t" + Vg;
+			writeFile(outPref+"_fitness.txt", OUT,append=T);
+			
+			// getting the genotype proportion is very costly so its turned off atm
+			//HomRef=sapply(M1, "sum(p1.individuals.genome1.containsMutations(applyValue)==F&p1.individuals.genome2.containsMutations(applyValue)==F)/p1.individuals.size();");
+			//HomAlt=sapply(M1, "sum(p1.individuals.genome1.containsMutations(applyValue)==T&p1.individuals.genome2.containsMutations(applyValue)==T)/p1.individuals.size();");
+			//Het1=sapply(M1, "sum(p1.individuals.genome1.containsMutations(applyValue)==F&p1.individuals.genome2.containsMutations(applyValue)==T)/p1.individuals.size();");
+			//Het2=sapply(M1, "sum(p1.individuals.genome1.containsMutations(applyValue)==T&p1.individuals.genome2.containsMutations(applyValue)==F)/p1.individuals.size();");
+			//Het=Het1+Het2;
+			//OUT_muts=sim.generation+ "\t" + p1.individualCount + "\t" + M1.id + "\t" + p + "\t" + z + "\t" + h + "\t" + HomRef + "\t" + HomAlt + "\t" + Het;
+		
+		}
+	}
+	
+	/// extinction
+	if( sum(sim.subpopulations.individualCount)<2 )
+	{
+		print("Extinction!!!!! gen="+sim.generation);
+		coords=readFile(coord_file_in);
+		coords=asInteger(strsplit(coords[length(coords)-1],"\t")[4]);
+		
+		for(pop in sim.subpopulations)
+		{
+			out=sim.generation+"\t"+"extinction";
+			writeFile(outPref + "_loadSummary.txt",out,append=T);
+		}
+		sim.simulationFinished();
+	}
+
+}
+
+// end simulation
+s2 100000000 late() {
+	print("Finsihed" + "\t" + sim.generation + "\t" + time() + "\t" + date());
+	sim.simulationFinished();
+}
+
+
+////regulate K so it always stays at the target N
+2: late()
+{
+	for(pop in sim.subpopulations)
+	{
+		N=pop.individualCount;
+		target=pop.getValue("targetN");
+		currSize=N/target;
+		currK=pop.tag;
+		if(currSize<0.9)
+		{
+			newN=pop.tag+pop.tag*0.1;
+			if(newN<(target*2)){print("K up");pop.tag=asInteger(newN);}else{print("K correction too high - New N="+newN+ " - higher than:"+(target*2));}
+		}
+		if(currSize>1.1){
+			print("K down");
+			newN=pop.tag-pop.tag*0.1;
+			if(newN<0){newN=pop.tag;}
+			pop.tag=asInteger(newN);
+		}
+		if(currSize<0.9 & N>(target*2)){print("K correction over 2*K");}
+	}
+}
+
+
+
+//reproduction age restrictions + litter size - monogamous mating
+reproduction() {
+	
+	for(pop in sim.subpopulations)
+	{
+		// randomize the order of p1.individuals
+		parents_age1plus=pop.individuals[pop.individuals.age>=1];
+		parents = sample(parents_age1plus, length(parents_age1plus));
+		// draw monogamous pairs and generate litters
+		if(length(parents)>=4){
+			for (i in seq(0, length(parents_age1plus) - 2, by=2))
+			{
+				parent1 = parents[i];
+				parent2 = parents[i + 1];
+				//			litterSize = rbinom(1, 10,0.3);
+				attempts=ifelse(rbinom(1, 1,0.5)==0,3,4); // 3.4 attempts per pair
+				litterSize = sum(rbinom(attempts, 1,0.8)); // prob 0.8 without predation, 0.34 with
+				if(litterSize==0){next;}
+				for (j in 1:litterSize)
+				{
+					pop.addCrossed(parent1, parent2);
+				}
+			}
+		}
+	}
+	// disable this callback for this generation
+	self.active = 0;
+}
+
+
+// the fitness of the QTL mutations is first set to 1 and then their effect accounted for with a fitnescalling formula
+fitness(m1002) { return 1.0; }
+//// Fitness scalling regulated with a life table based individual mortality and the QTL mutations
+early() {
+	for(pop in sim.subpopulations)
+	{
+		optimum = sim.getValue("opt"); // define optimum in this example is zero
+		if(sim.generation > Tdelta){optimum = opt2;}
+		
+		
+		inds = pop.individuals; // get all individuals
+		m=sim.mutationTypes[del_mut+1];
+		phenotypes = inds.sumOfMutationsOfType(m); // get their phenotypic
+		wLoop=c();
+		S=1.0;
+		pheno=c();
+		for(indv in inds)
+		{
+			muts0_m1 = indv.genomes[0].mutationsOfType(m);
+			muts1_m1 = indv.genomes[1].mutationsOfType(m);
+			if(size(muts0_m1)+size(muts1_m1)>0)
+			{
+				HOMO_m1=setIntersection(muts0_m1,muts1_m1);
+				HETERO_m1=setSymmetricDifference(muts0_m1,muts1_m1);
+				if(size(HOMO_m1)>0){
+					z_homo=sum(HOMO_m1.selectionCoeff);
+				} else {z_homo=0;}
+				if(size(HETERO_m1)>0){
+					z_hetero=sum(HETERO_m1.selectionCoeff * m.dominanceCoeff);
+				} else {z_hetero=0;}
+				pheno_indv=z_homo+z_hetero;
+				z_indv=((pheno_indv)-optimum)^2;
+				z_indv=1-S*(z_indv);
+			} else {pheno_indv=0.0;z_indv=1.0;}
+			pheno=c(pheno,pheno_indv);
+			wLoop=c(wLoop,z_indv);
+		}
+		env = rnorm(size(inds), 0.0, sqrt(Ve));
+		phenotypes = pheno + env;
+		wLoop=((phenotypes)-optimum)^2;
+		wLoop=1-S*(wLoop);
+		pheno=phenotypes;
+		if(size(wLoop)>0){wLoop[wLoop<0.0]=0.0;}else{wLoop=1;}
+		inds.tagF = phenotypes;   // just for output below
+		sim.setValue("fit",wLoop);
+		inds.fitnessScaling = wLoop; // fitness effect of the phenotypic fitness		
+		inds = pop.individuals;
+		popCount=pop.individualCount;
+		if(popCount==0){next;}
+		ages = inds.age;
+		prob_mort = (sim.generation < burn) ? prob_mort_ancestral else prob_mort_modern;
+		mortality = prob_mort[ages];
+		survival = 1 - mortality;
+		inds.fitnessScaling = survival;
+		// density-dependence, factoring in individual mortality
+		popCount=pop.individualCount;
+		if(!isNULL(popCount) & !isNULL(survival)){
+			//			print("pop:"+pop.id+" - N:"+popCount + " - survival:"+mean(survival));
+			FITscal=pmin((pop.tag / (popCount * mean(survival))),1.0);
+			if(FITscal<0){FITscal=0;}
+			pop.fitnessScaling = FITscal;
+		}
+	}
+}
+
+/// Print progress
+10: late()
+{
+	if(sim.generation % 100 ==0)
+	{
+		curr_opt = sim.getValue("opt"); // define optimum in this example is zero
+		if(sim.generation > Tdelta){curr_opt = opt2;}
+		phenotypes=sim.subpopulations.individuals.tagF;
+		fitness=sim.getValue("fit");
+		for(pop in sim.subpopulations)
+		{
+			catn("PROGRESS - late  pop:"+pop.id+" - "+date() + "\t" + time() + "\t" + "generation: " + sim.generation + "\t" + "N: " + pop.individualCount + "\t" + "targetK: " + pop.getValue("targetN") + "\t" + "currentK: " + pop.tag  + "\t" + " mean phenotypes ="+ mean(phenotypes)  + "\t" +  " mean fitness ="+mean(fitness) + "\r");
+			catn("memory usage: "+usage()/1000+"Gb" + "\r");
+		}
+	}
+}
+
+//Functions
+function (s) getPopSumm(o pop)
+{
+	mNeutral=sim.mutationTypes[sim.mutationTypes.id==mut_neutral];
+	mAdapt=sim.mutationTypes[sim.mutationTypes.id==mut_adapt];
+	i=pop.individuals;
+	indvCount=length(i);
+	m = sim.mutations;
+	m_uniq=m[m.mutationType!=mNeutral];
+	m_uniq=m[m.mutationType!=mAdapt];
+	freqMut=sim.mutationFrequencies(pop,m_uniq);
+	Mutcount=sum(freqMut>0);
+	ScoefMut=abs(m_uniq.selectionCoeff);
+	DcoefMut=m_uniq.mutationType.dominanceCoeff;
+	//	HomRef=sapply(m_uniq, "sum(i.genome1.containsMutations(applyValue)==F&i.genome2.containsMutations(applyValue)==F)/i.size();");
+	//	HomAlt=sapply(m_uniq, "sum(i.genome1.containsMutations(applyValue)==T&i.genome2.containsMutations(applyValue)==T)/i.size();");
+	//	Het1=sapply(m_uniq, "sum(i.genome1.containsMutations(applyValue)==F&i.genome2.containsMutations(applyValue)==T)/i.size();");
+	//	Het2=sapply(m_uniq, "sum(i.genome1.containsMutations(applyValue)==T&i.genome2.containsMutations(applyValue)==F)/i.size();");
+	//	Het=(Het1+Het2);
+	//	mHet=mean(Het);
+	totalLoad=sum(freqMut*ScoefMut);
+	relzLoad=sum(freqMut^2*ScoefMut)+ (2*sum(freqMut*(1-freqMut)*ScoefMut*DcoefMut));
+	mskLoad=sum(freqMut*ScoefMut) - sum(freqMut^2*ScoefMut) - (2*sum(freqMut*(1-freqMut)*ScoefMut*DcoefMut));
+	
+	fitness_indv=c();
+	for(indv in pop.individuals){
+		// Calculate individual fitness
+		muts0_m2 = indv.genomes[0].mutations;
+		muts1_m2 = indv.genomes[1].mutations;
+		HOMO_m2=setIntersection(muts0_m2,muts1_m2);
+		HETERO_m2=setSymmetricDifference(muts0_m2,muts1_m2);
+		if(length(HETERO_m2)>0){fit_hetero=1-(abs(HETERO_m2.selectionCoeff)*HETERO_m2.mutationType.dominanceCoeff);}
+		if(length(HETERO_m2)==0){fit_hetero=1;}
+		fit_homo=1-abs(HOMO_m2.selectionCoeff);
+		if(length(fit_homo)==0){fit_homo=1;}
+		indv_fit=product(c(fit_hetero,fit_homo));
+		fitness_indv=c(fitness_indv,indv_fit);
+	}
+	
+	fitness_cached=pop.cachedFitness(pop.individuals.index);
+	
+	out=sim.generation +"\t"+ pop.id +"\t"+ indvCount +"\t"+ Mutcount +"\t"+ "NA" +"\t"+ "NA" +"\t"+ totalLoad +"\t"+ relzLoad +"\t"+ mskLoad +"\t"+mean(fitness_indv)+"\t"+sd(fitness_indv)+"\t"+mean(fitness_cached)+"\t"+sd(fitness_cached);
+	return(out);
+}
+
+function (i)readIntTable(s$ path)
+{
+	if (!fileExists(path))
+		stop("readIntTable(): File not found at path " + path);
+	l = readFile(path);
+	m = sapply(l, "asInteger(strsplit(applyValue));", simplify="matrix");
+	return t(m);
+}
+
